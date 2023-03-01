@@ -1,0 +1,86 @@
+name: Kernel Build by neutron-clang
+
+on:
+  workflow_run:
+    workflows: ["Submodules Sync"]
+    types:
+      - completed
+  # 手动触发部署
+  workflow_dispatch:
+
+env:
+  TARGET_KERNEL: "Lynnrin"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
+      - name: Get toolchains
+        working-directory: ./toolchains
+        run: |
+          mkdir -p neutron-clang && cd neutron-clang
+          bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S
+          bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") --patch=glibc
+      - name: Set compile params
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/neutron-clang
+          export PATH="$CLANG_DIR/bin:$PATH"
+          echo "CC=$CLANG_DIR/bin/clang" >> $GITHUB_ENV
+          echo "THYME_KERNEL_DIR=$GITHUB_WORKSPACE/Kernel_Source/$TARGET_KERNEL" >> $GITHUB_ENV
+          echo "THREAD=$(nproc --all)" >> $GITHUB_ENV
+          echo "OUT_DIR=$GITHUB_WORKSPACE/out/$TARGET_KERNEL" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> $GITHUB_ENV
+      - name: Update KernelSU
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          rm -rf ./KernelSU
+          rm -rf ./drivers/kernelsu
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+      - name: Make defconfig
+        env : 
+          DEFCONFIG_NAME: thyme_defconfig
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/neutron-clang
+          export PATH="$CLANG_DIR/bin:$PATH"
+          args="-j${{ env.THREAD }} \
+              O=${{ env.OUT_DIR }} \
+              ARCH=${{ env.ARCH }} \
+              CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+              CROSS_COMPILE_COMPAT=${{ env.CROSS_COMPILE_COMPAT }} \
+              AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM_IAS=1 LLVM=1 \
+              CC=${{ env.CC }}"
+          make ${args} $DEFCONFIG_NAME
+      - name: Build kernel
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/neutron-clang
+          export PATH="$CLANG_DIR/bin:$PATH"
+          args="-j${{ env.THREAD }} \
+              O=${{ env.OUT_DIR }} \
+              ARCH=${{ env.ARCH }} \
+              CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+              CROSS_COMPILE_COMPAT=${{ env.CROSS_COMPILE_COMPAT }} \
+              AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip LLVM_IAS=1 LLVM=1 \
+              CC=${{ env.CC }}"
+          make ${args}
+      - name: Make flashable AnyKernel3 image
+        working-directory: ./toolchains/AnyKernel3/
+        run: |
+          cp -rf ${{ env.OUT_DIR }}/arch/arm64/boot/Image ./
+      - name: Upload AnyKernel3 image
+        uses: actions/upload-artifact@v3
+        with:
+          name: KernelSU-Lynnrin-Thyme@easterNday
+          path: ./toolchains/AnyKernel3/

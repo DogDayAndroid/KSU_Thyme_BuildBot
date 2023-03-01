@@ -1,0 +1,9 @@
+[submodule "Kernel_Source/Lynnrin"]
+	path = Kernel_Source/Lynnrin
+	url = https://github.com/DogDayAndroid/android_kernel_xiaomi_thyme
+    branch = thirteen
+    update = merge
+[submodule "toolchains/tc-build"]
+	path = toolchains/tc-build
+	url = https://github.com/ClangBuiltLinux/tc-build
+	ignore = dirty
