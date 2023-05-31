@@ -1,0 +1,87 @@
+name: Kernel Build by gas & clang
+
+on:
+  workflow_run:
+    workflows: ["Submodules Sync"]
+    types:
+      - completed
+  # 手动触发部署
+  workflow_dispatch:
+
+env:
+  TARGET_KERNEL: "Lynnrin"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3
+      - name: Get toolchains
+        working-directory: ./toolchains
+        run: |
+          git clone https://android.googlesource.com/platform/prebuilts/gas/linux-x86/ -b master --depth=1 gas
+          git clone https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone/ -b 11 --depth=1 clang
+      # 设定编译参数
+      - name: Set compile params
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/clang
+          echo "CC=$CLANG_DIR/bin/clang" >> $GITHUB_ENV
+          echo "THYME_KERNEL_DIR=$GITHUB_WORKSPACE/Kernel_Source/$TARGET_KERNEL" >> $GITHUB_ENV
+          echo "THREAD=$(nproc --all)" >> $GITHUB_ENV
+          echo "OUT_DIR=$GITHUB_WORKSPACE/out/$TARGET_KERNEL" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+      - name: Update KernelSU
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          rm -rf ./KernelSU
+          rm -rf ./drivers/kernelsu
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+      - name: Make defconfig
+        env : 
+          DEFCONFIG_NAME: thyme_defconfig
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/clang
+          GCC_DIR=$GITHUB_WORKSPACE/toolchains/gas
+          export PATH="$CLANG_DIR/bin:$GCC_DIR:$PATH"
+          args="-j${{ env.THREAD }} \
+              O=${{ env.OUT_DIR }} \
+              ARCH=${{ env.ARCH }} \
+              CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+              CLANG_TRIPLE=${{ env.CLANG_TRIPLE }} \
+              CROSS_COMPILE_ARM32=${{ env.CROSS_COMPILE_COMPAT }} \
+              CC=${{ env.CC }}"
+          make ${args} $DEFCONFIG_NAME
+      - name: Build kernel
+        working-directory: ${{ env.THYME_KERNEL_DIR }}
+        run: |
+          CLANG_DIR=$GITHUB_WORKSPACE/toolchains/clang
+          GCC_DIR=$GITHUB_WORKSPACE/toolchains/gas
+          export PATH="$CLANG_DIR/bin:$GCC_DIR:$PATH"
+          args="-j${{ env.THREAD }} \
+              O=${{ env.OUT_DIR }} \
+              ARCH=${{ env.ARCH }} \
+              CROSS_COMPILE=${{ env.CROSS_COMPILE }} \
+              CLANG_TRIPLE=${{ env.CLANG_TRIPLE }} \
+              CROSS_COMPILE_ARM32=${{ env.CROSS_COMPILE_COMPAT }} \
+              CC=${{ env.CC }}"
+          make ${args}
+      - name: Make flashable AnyKernel3 image
+        working-directory: ./toolchains/AnyKernel3/
+        run: |
+          cp -rf ${{ env.OUT_DIR }}/arch/arm64/boot/Image ./
+      - name: Upload AnyKernel3 image
+        uses: actions/upload-artifact@v3
+        with:
+          name: KernelSU-Lynnrin-Thyme@easterNday
+          path: ./toolchains/AnyKernel3/
